@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
 import openpyxl
 from copy import copy
 from io import BytesIO
 from datetime import datetime
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine
 import re
 
 st.set_page_config(page_title="Cadastro de Produtos - Redes", page_icon="📋", layout="wide")
@@ -70,11 +71,24 @@ REDE_CONFIGS = {
 
 @st.cache_resource
 def get_connection():
+    """
+    Cria um engine SQLAlchemy com pool_pre_ping=True.
+    Isso testa a conexão antes de cada query e reconecta automaticamente
+    se ela tiver caído (resolve o erro "connection already closed" causado
+    por conexões ociosas derrubadas pelo servidor — o app fica minutos sem
+    uso entre um cadastro e outro).
+    """
     try:
         cfg = st.secrets["postgres"]
-        return psycopg2.connect(
-            host=cfg["host"], database=cfg["database"],
-            user=cfg["user"], password=cfg["password"], port=cfg["port"]
+        senha = quote_plus(cfg["password"])  # evita erro se a senha tiver caracteres especiais
+        url = (
+            f"postgresql+psycopg2://{cfg['user']}:{senha}"
+            f"@{cfg['host']}:{cfg['port']}/{cfg['database']}"
+        )
+        return create_engine(
+            url,
+            pool_pre_ping=True,   # testa a conexão antes de usar; reconecta se estiver morta
+            pool_recycle=1800,    # recicla conexões a cada 30 min
         )
     except Exception as e:
         st.error(f"Erro ao conectar ao banco de dados: {e}")
