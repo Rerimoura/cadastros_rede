@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
 from copy import copy
 from io import BytesIO
 from datetime import datetime
@@ -40,6 +41,34 @@ def col_validade(p):
     return f"{meses} meses"
 
 
+# ── Rede Lucas ────────────────────────────────────────────────────────────────
+
+def descricao_limpa(p):
+    # Regra da rede: sem espaços sobrando no início, fim ou entre palavras
+    return ' '.join(str(p['descricao'] or '').split())
+
+
+def col_nome(p):
+    palavras = descricao_limpa(p).split(' ', 1)
+    return palavras[0] or None
+
+
+def col_complemento(p):
+    palavras = descricao_limpa(p).split(' ', 1)
+    return palavras[1] if len(palavras) > 1 else None
+
+
+def col_qtd_caracteres(p): return len(descricao_limpa(p))
+def col_nome_item_25(p): return descricao_limpa(p)[:25] or None
+def col_embalagem_peca(p): return 'PC'
+def col_validade_dias(p): return int_or_none(p['dias_validade'])
+def col_tem_troca_nao(p): return 'N'
+def col_fornecedor_biz(p): return 'REDE BIZ SERVICOS E DISTRIBUICAO DE PRODUTOS LTDA'
+def col_cnpj_biz(p): return '09.201.728/0002-37'
+def col_motivo_cadastro(p): return p.get('motivo_cadastro') or None
+def col_substituicao_nao(p): return 'Não'
+
+
 # ── Configuração por rede ───────────────────────────────────────────────────
 # Para adicionar uma nova rede: colocar o arquivo MODELO em templates/ e criar
 # uma nova entrada aqui com o mapeamento de colunas dessa planilha.
@@ -63,6 +92,48 @@ REDE_CONFIGS = {
             'P': col_qtd_embalagem,
             'Q': col_validade,
         },
+        'observacao': (
+            "Campos não listados no De/Para (Complemento, Forma de Aquisição, "
+            "Tipo de Troca, Tributação) ficam em branco — são preenchidos manualmente."
+        ),
+    },
+    'Rede Lucas': {
+        'template_path': 'templates/redelucas.xlsx',
+        'sheet_name': 'Ficha de cadastro ',  # o nome da aba tem um espaço no final
+        'linha_inicial': 9,
+        # Campos que o usuário digita na tela; o valor vai para produto[chave]
+        'entradas': {
+            'motivo_cadastro': 'Motivo do cadastro',
+        },
+        # O openpyxl descarta as listas suspensas do template ao abrir o arquivo;
+        # aqui elas são recriadas: {intervalo: fórmula da lista}
+        'validacoes_lista': {
+            'N9:N104': 'Premissas!$A$1:$A$4',
+        },
+        'colunas': {
+            'A': col_ean,
+            'B': col_nome,
+            'C': col_complemento,
+            'F': col_marca,
+            'G': col_embalagem_peca,
+            'H': col_qtd_embalagem,
+            'J': col_peso,
+            'M': col_validade_dias,
+            'N': col_tem_troca_nao,
+            'O': col_qtd_caracteres,
+            'P': col_nome_item_25,
+            'Q': col_ncm,
+            'U': col_fornecedor_biz,
+            'V': col_mercadoria,
+            'W': col_cnpj_biz,
+            'AD': col_motivo_cadastro,
+            'AE': col_substituicao_nao,
+        },
+        'observacao': (
+            "Campos não listados no De/Para (Cód Subgrupo, Cód Dep, Função, "
+            "Peso Líquido, Balança, Custo, Preços, Cod Referencial e lojas) "
+            "ficam em branco — são preenchidos manualmente."
+        ),
     },
 }
 
@@ -153,14 +224,21 @@ def parse_codigos(texto):
     return codigos
 
 
-def gerar_planilha(rede_config, produtos):
+def gerar_planilha(rede_config, produtos, entradas=None):
     """Preenche o template da rede a partir da linha_inicial, um produto por
-    linha, copiando o estilo da linha-modelo para as linhas extras criadas."""
+    linha, copiando o estilo da linha-modelo para as linhas extras criadas.
+    `entradas` são os campos digitados pelo usuário, repetidos em todo produto."""
     wb = openpyxl.load_workbook(rede_config['template_path'])
     ws = wb[rede_config['sheet_name']]
     linha_modelo = rede_config['linha_inicial']
 
+    for intervalo, formula in rede_config.get('validacoes_lista', {}).items():
+        dv = DataValidation(type='list', formula1=formula, allow_blank=True)
+        dv.add(intervalo)
+        ws.add_data_validation(dv)
+
     for i, produto in enumerate(produtos):
+        produto = {**produto, **(entradas or {})}
         linha = linha_modelo + i
         if linha != linha_modelo:
             for col in range(1, ws.max_column + 1):
@@ -205,11 +283,21 @@ def main():
         placeholder="Cole os códigos, um por linha ou separados por vírgula.\nEx: 306543, 208949, 308763"
     )
 
+    entradas = {
+        chave: st.text_input(rotulo).strip()
+        for chave, rotulo in rede_config.get('entradas', {}).items()
+    }
+
     if st.button("Gerar planilha", type="primary"):
         codigos = parse_codigos(texto_codigos)
 
         if not codigos:
             st.warning("Informe ao menos um código de mercadoria válido.")
+            return
+
+        vazias = [rede_config['entradas'][k] for k, v in entradas.items() if not v]
+        if vazias:
+            st.warning(f"Preencha: {', '.join(vazias)}.")
             return
 
         with st.spinner("Buscando produtos no banco de dados..."):
@@ -236,7 +324,7 @@ def main():
         st.success(f"✅ {len(df)} produto(s) encontrado(s).")
         st.dataframe(df, use_container_width=True)
 
-        buffer = gerar_planilha(rede_config, df.to_dict('records'))
+        buffer = gerar_planilha(rede_config, df.to_dict('records'), entradas)
 
         st.download_button(
             "📥 Baixar planilha preenchida",
@@ -247,10 +335,8 @@ def main():
         )
 
     st.markdown("---")
-    st.caption(
-        "📌 Campos não listados no De/Para (Complemento, Forma de Aquisição, "
-        "Tipo de Troca, Tributação) ficam em branco — são preenchidos manualmente."
-    )
+    if rede_config.get('observacao'):
+        st.caption(f"📌 {rede_config['observacao']}")
 
 
 if __name__ == "__main__":

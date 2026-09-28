@@ -4,10 +4,11 @@ Web app em [Streamlit](https://streamlit.io/) para preenchimento automático de 
 
 ## Como funciona
 
-1. Escolhe a rede (hoje: SuperMaxi).
+1. Escolhe a rede (hoje: SuperMaxi e Rede Lucas).
 2. Cola os códigos de mercadoria (um por linha ou separados por vírgula).
-3. O app busca os dados em `mercadorias` (dados fiscais/logísticos) e `categorias` (marca) no Postgres, e preenche o template Excel da rede a partir da linha 9, uma linha por produto.
-4. Baixa a planilha pronta para envio.
+3. Se a rede pedir algum campo digitado (ex.: motivo do cadastro na Rede Lucas), preenche na tela.
+4. O app busca os dados em `mercadorias` (dados fiscais/logísticos) e `categorias` (marca) no Postgres, e preenche o template Excel da rede a partir da linha 9, uma linha por produto.
+5. Baixa a planilha pronta para envio.
 
 Códigos não encontrados na base são avisados na tela e ficam de fora do arquivo gerado.
 
@@ -16,7 +17,8 @@ Códigos não encontrados na base são avisados na tela e ficam de fora do arqui
 1. Colocar o arquivo `MODELO ...xlsx` da rede em `templates/`.
 2. Adicionar uma entrada em `REDE_CONFIGS` (em `CadastroRedes.py`) com:
    - `template_path`, `sheet_name`, `linha_inicial` (primeira linha de dados);
-   - `colunas`: um dicionário `{letra_da_coluna: função(produto) -> valor}`.
+   - `colunas`: um dicionário `{letra_da_coluna: função(produto) -> valor}`;
+   - opcionais: `entradas` (`{chave: rótulo}` — campos digitados na tela, disponíveis em `produto[chave]`), `validacoes_lista` (`{intervalo: fórmula}` — recria listas suspensas do template, que o openpyxl descarta) e `observacao` (nota exibida no rodapé).
 
 O restante do fluxo (input, busca no banco, geração do Excel, download) é reaproveitado automaticamente.
 
